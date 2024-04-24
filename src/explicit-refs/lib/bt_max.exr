@@ -1,0 +1,24 @@
+
+(* Max exercise *)
+
+let n_left = { data <= 12; left <= 0; right <= 0}    (* 0 in head signals null *)
+in let n_right = { data <= 44; left <= 0; right <= 0}
+in let n_root = { data <= 33; left <= n_left ; right <= n_right }
+in let t1 = { root <= n_root ; length <= 3} 
+in let max_bt = proc (tr) {
+letrec f (n) = (* This isn't actually a BST function but it works, it's just the normal BT max *)
+  if number?(n.left)
+  then 
+    (if (number?(n.right))
+    then (n.data)
+    else (if (f n.right)>>(n.data) then (f n.right) else (n.data)))
+  else
+    if number?(n.right)
+    then if (f n.left)>>n.data then (f n.left) else n.data
+    else 
+      if n.data>>(f n.left) 
+      then if n.data>>(f n.right) then n.data else (f n.right)
+      else if (f n.left)>>(f n.right) then (f n.left) else (f n.right)
+  in (f tr.root)
+}
+in (max_bt t1)

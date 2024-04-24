@@ -1,8 +1,11 @@
+(* Thys Vanderschoot *)
+(* I pledge my honor that I have abided by the Stevens Honor System *)
+
 open ReM
 open Dst
 open Parser_plaf.Ast
 open Parser_plaf.Parser
-       
+
 let rec chk_expr : expr -> texpr tea_result = function 
   | Int _n -> return IntType
   | Var id -> apply_tenv id
@@ -50,8 +53,96 @@ let rec chk_expr : expr -> texpr tea_result = function
      if t=tRes 
      then chk_expr target
      else error
-         "LetRec: Type of recursive function does not match
-declaration")
+         "LetRec: Type of recursive function does not match declaration")
+  | Record ([]) ->
+    error "record: empty record"
+  | Record(fs) ->
+    let (ids, bes) = List.split fs in
+    let (_bs, es) = List.split bes in
+    if (List.compare_lengths (List.sort_uniq compare ids) ids)=0
+    then chk_exprs es >>= fun ts ->
+      return (RecordType (List.combine ids ts))
+    else error "record: duplicate fields"
+    (* List.split List.combine *)
+  | Proj(e,id) -> 
+    chk_expr e >>= fun te ->
+    (match te with
+    | RecordType fts -> 
+      (match List.assoc_opt id fts with
+       | Some t -> return t
+       | None -> error "proj: field does not exist")
+    | _ -> error "proj: target not a record")
+  | NewRef(e) -> 
+    chk_expr e >>= fun t ->
+    return @@ RefType t
+  | DeRef(e) ->
+    chk_expr e >>= fun t ->
+    (match t with
+    | RefType t2 -> return t2
+    | _ -> error "deref: Expected a reference type")
+  | SetRef(e1,e2) ->
+    chk_expr e1 >>= fun t1 ->
+    (match t1 with
+    | RefType t1' -> (
+      chk_expr e2 >>= fun t2 ->
+      if t1'=t2 then return UnitType else error "setref: e1 and e2 different types")
+    | _ -> error "setref: Expected a reference type")
+  | BeginEnd([]) -> 
+    return UnitType
+  | BeginEnd(es) ->
+    chk_exprs es >>= fun ts ->
+    (match (List.rev ts) with
+    | h::_t -> return h
+    | _ -> failwith "Cannot reach here")
+  | EmptyList(t) ->
+    (match t with
+    | Some t' -> return @@ ListType t'
+    | None -> error "emptylist: type not provided")
+  | Cons(e1, e2) ->
+    chk_expr e1 >>= fun t1 ->
+    chk_expr e2 >>= fun t2 ->
+    (match t2 with
+    | ListType(t3) when t1=t3 -> return t2
+    | _ -> error "cons: type of head and tail do not match")
+  | IsEmpty(e) ->
+    chk_expr e >>= fun t ->
+    (match t with
+    | ListType _ -> return BoolType
+    | TreeType _ -> return BoolType
+    | _ -> error "isempty: type not list")
+  | Hd(e) ->
+    chk_expr e >>= fun t ->
+    (match t with
+    | ListType t2 -> return t2
+    | _ -> error "hd: not a list")
+  | Tl(e) ->
+    chk_expr e >>= fun t ->
+    (match t with
+    | ListType t2 -> return @@ ListType t2
+    | _ -> error "tl: not a list")
+  | EmptyTree(t) ->
+    (match t with
+    | Some t' -> return @@ TreeType t'
+    | None -> error "emptytree: no type")
+  | Node(de, le, re) ->
+    chk_expr de >>= fun dt ->
+    chk_expr le >>= fun lt ->
+    chk_expr re >>= fun rt ->
+    (match dt,lt,rt with
+    | t1, TreeType t2, TreeType t3 when t1=t2 && t2=t3 -> return @@ TreeType t1
+    | _,_,_ -> error "node: type mismatch")
+  | CaseT(target, emptycase, id1, id2, id3, nodecase) ->
+    chk_expr target >>= fun t ->
+    (match t with
+    | TreeType t' -> (
+      chk_expr emptycase >>= fun s1 ->
+      extend_tenv id1 t' >>+
+      extend_tenv id2 t >>+
+      extend_tenv id3 t >>+
+      chk_expr nodecase >>= fun s2 ->
+      (if s1=s2 then return s1 else error "nodet: type mismatch")
+    )
+    | _ -> error "caset: target not a tree")
   | Debug(_e) ->
     string_of_tenv >>= fun str ->
     print_endline str;
@@ -60,6 +151,14 @@ declaration")
 and
   chk_prog (AProg(_,e)) =
   chk_expr e
+and
+  chk_exprs(es) = 
+  match es with
+  | [] -> return []
+  | h::t ->
+    chk_expr h >>= fun th ->
+    chk_exprs t >>= fun l ->
+    return (th::l)
 
 (* Type-check an expression *)
 let chk (e:string) : texpr result =

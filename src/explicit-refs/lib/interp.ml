@@ -1,8 +1,26 @@
+(* Thys Vanderschoot *)
+(* I pledge my honor that I have abided by the Stevens Honor System *)
+
 open Ds
 open Parser_plaf.Ast
 open Parser_plaf.Parser
     
 let g_store = Store.empty_store 20 (NumVal 0)
+
+let rec addIds fs evs = 
+  match fs,evs with
+  | [],[] -> []
+  | (id,(is_mutable,_))::t1, v::t2 -> (id,(is_mutable,v))::addIds t1 t2
+  | _,_ -> failwith "error : lists have different sizes"
+
+let rec sequence : ('a ea_result) list -> ('a list) ea_result = 
+  fun cs ->
+  match cs with
+  | [] -> return []
+  | c :: t ->
+    c >>= fun v ->
+    sequence t >>= fun vs ->
+    return (v :: vs)
 
 let rec eval_expr : expr -> exp_val ea_result = fun e ->
   match e with
@@ -97,7 +115,70 @@ let rec eval_expr : expr -> exp_val ea_result = fun e ->
     let str_store = Store.string_of_store string_of_expval g_store 
     in (print_endline (str_env^"\n"^str_store);
     error "Reached breakpoint")
+  | IsNumber(e) -> 
+    eval_expr e >>= fun ev ->
+    let ev' = (int_of_numVal ev) EmptyEnv in
+    (
+      match ev' with
+      | Ok _ -> return (BoolVal true)
+      | Error _ -> return (BoolVal false)
+    )
+  | Proj(e,id) ->
+    eval_expr e >>=
+    fields_of_recordVal >>= fun l ->
+    let matches = List.filter (fun (s,(_b,_ev)) -> s=id) l in (
+      match matches with
+      | [] -> error "Proj: field does not exist"
+      | [h] -> 
+        (match (fst (snd h)) with
+        | true -> int_of_refVal (snd @@ snd h) >>= Store.deref g_store
+        | false -> return @@ snd @@ snd h
+        )
+      | _ -> failwith "Proj: record had duplicate fields"
+    )
+  | SetField(e1,id,e2) ->
+    eval_expr e1 >>= 
+    fields_of_recordVal >>= fun ev1 ->
+    let matches = List.filter (fun (s,(_b,_ev)) -> s=id) ev1 in (
+      match matches with
+      | [] -> error "SetField: field does not exist"
+      | [(_id',(is_mutable,ev))] -> 
+        (match is_mutable with
+        | true -> 
+          (int_of_refVal ev >>= fun l ->
+          eval_expr e2 >>= fun ev2 ->
+          Store.set_ref g_store l ev2 >>= fun _ ->
+          return UnitVal)
+        | _ -> error "Field not mutable")
+      | _ -> failwith "SetField: record had duplicate fields")
+  | Record (fs) ->
+    sequence (List.map process_field fs) >>= fun evs ->
+    return (RecordVal (addIds fs evs))
+  | IsEqual (e1,e2) ->
+    eval_expr e1 >>= fun ev1 ->
+    eval_expr e2 >>= fun ev2 ->
+    (match ev1,ev2 with
+    | NumVal n, NumVal m -> return (BoolVal (n=m))
+    | _, _ -> return @@ BoolVal false)
+  | IsGT(e1,e2) ->
+    eval_expr e1 >>= fun ev1 ->
+    eval_expr e2 >>= fun ev2 ->
+    (match ev1,ev2 with
+    | NumVal n, NumVal m -> return (BoolVal (n>m))
+    | _, _ -> return @@ BoolVal false)
+  | IsLT(e1,e2) ->
+    eval_expr e1 >>= fun ev1 ->
+    eval_expr e2 >>= fun ev2 ->
+    (match ev1,ev2 with
+    | NumVal n, NumVal m -> return (BoolVal (n<m))
+    | _, _ -> return @@ BoolVal false)
   | _ -> failwith ("Not implemented: "^string_of_expr e)
+and
+process_field(_id, (is_mutable, e)) = 
+  eval_expr e >>= fun ev ->
+  if is_mutable
+  then return (RefVal (Store.new_ref g_store ev))
+  else return ev
 
 let eval_prog (AProg(_,e)) =
   eval_expr e         
@@ -108,4 +189,9 @@ let interp (s:string) : exp_val result =
   in run c
 
 
-
+(* Interpret an expression read from a file with optional extension . exr *)
+let interpf (s:string) : exp_val result =
+  let s = String.trim s (* remove leading and trailing spaces *)
+  in let file_name = (* allow rec to be optional *)
+    match String.index_opt s '.' with None -> s^".exr" | _ -> s
+  in interp @@ read_file file_name
